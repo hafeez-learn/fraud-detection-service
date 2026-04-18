@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: fraud-detection-service
+
+  datasource:
+    url: jdbc:h2:mem:frauddb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    consumer:
+      group-id: fraud-detection-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.banking.fraud.model"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+server:
+  port: 8081
+
+# Fraud Detection Config
+fraud:
+  rules:
+    high-amount-threshold: 5000.00
+    velocity-window-seconds: 300
+    max-transactions-per-window: 10
+    countries-blacklist: ["NK", "IR", "SY"]
+  ml:
+    anomaly-threshold: 0.75
+    model-path: /models/anomaly_model.json
+  actions:
+    block-threshold: 0.9
+    alert-threshold: 0.6
+    review-threshold: 0.3
+
+# Kafka Topics
+kafka:
+  topics:
+    transactions: transactions
+    fraud-alerts: fraud-alerts
+    fraud-decisions: fraud-decisions
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

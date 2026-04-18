@@ -1,18 +1,13 @@
 package com.banking.fraud.ml;
 
-import smile.classification.RandomForest;
-import smile.data.DataFrame;
-import smile.data.type.StructType;
-import smile.data.type.StructField;
-import smile.data.type.DataType;
-import smile.vector.Vector;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.Map;
-import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AnomalyDetectionService {
@@ -20,19 +15,11 @@ public class AnomalyDetectionService {
     @Value("${fraud.ml.anomaly-threshold:0.75}")
     private double anomalyThreshold;
 
-    private RandomForest model;
-    private final Map<String, Double> accountBaseline = new HashMap<>();
+    private final StringRedisTemplate redisTemplate;
+    private final Map<String, Double> localBaselineCache = new ConcurrentHashMap<>();
 
-    @PostConstruct
-    public void init() {
-        // Initialize with a simple mock model
-        // In production, load pre-trained model from ${fraud.ml.model-path}
-        initializeMockModel();
-    }
-
-    private void initializeMockModel() {
-        // Mock model initialization
-        // Real implementation would load: model = RandomForest.load(modelPath);
+    public AnomalyDetectionService(StringRedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
     }
 
     /**
@@ -49,7 +36,7 @@ public class AnomalyDetectionService {
         double score = 0.0;
 
         // Amount anomaly (deviation from account baseline)
-        double baseline = accountBaseline.getOrDefault(accountId, 500.0);
+        double baseline = getAccountBaseline(accountId);
         if (amount > baseline * 3) {
             score += 0.3;
         } else if (amount > baseline * 2) {
@@ -76,8 +63,8 @@ public class AnomalyDetectionService {
             score += 0.1;
         }
 
-        // Country risk (simplified)
-        if (List.of("NK", "IR", "SY", "YE").contains(country)) {
+        // Country risk
+        if (Arrays.asList("NK", "IR", "SY", "YE").contains(country)) {
             score += 0.3;
         }
 
@@ -85,15 +72,42 @@ public class AnomalyDetectionService {
     }
 
     /**
+     * Gets account baseline from Redis (with local cache fallback)
+     */
+    private double getAccountBaseline(String accountId) {
+        String cacheKey = "baseline:" + accountId;
+        String cached = (String) redisTemplate.opsForHash().get(cacheKey, "avg");
+        if (cached != null) {
+            return Double.parseDouble(cached);
+        }
+        return localBaselineCache.getOrDefault(accountId, 500.0);
+    }
+
+
+    /**
      * Updates account baseline after successful transaction
      */
     public void updateBaseline(String accountId, double amount) {
-        double current = accountBaseline.getOrDefault(accountId, 0.0);
-        double count = accountBaseline.getOrDefault(accountId + "_count", 0.0);
-        // Rolling average
-        double newAvg = (current * count + amount) / (count + 1);
-        accountBaseline.put(accountId, newAvg);
-        accountBaseline.put(accountId + "_count", count + 1);
+        String cacheKey = "baseline:" + accountId;
+        String countKey = "baseline:" + accountId + ":count";
+
+        
+        // Get current values from Redis
+        String currentAvgStr = (String) redisTemplate.opsForHash().get(cacheKey, "avg");
+        String countStr = redisTemplate.opsForValue().get(countKey);
+        
+        double currentAvg = currentAvgStr != null ? Double.parseDouble(currentAvgStr) : 0.0;
+        int count = countStr != null ? Integer.parseInt(countStr) : 0;
+        
+        // Calculate new rolling average
+        double newAvg = (currentAvg * count + amount) / (count + 1);
+        
+        // Store in Redis
+        redisTemplate.opsForHash().put(cacheKey, "avg", String.valueOf(newAvg));
+        redisTemplate.opsForValue().set(countKey, String.valueOf(count + 1));
+        
+        // Also update local cache for fallback
+        localBaselineCache.put(accountId, newAvg);
     }
 
     public boolean isAnomaly(double score) {

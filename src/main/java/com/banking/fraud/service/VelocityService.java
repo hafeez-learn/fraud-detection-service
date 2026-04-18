@@ -5,7 +5,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class VelocityService {
@@ -23,20 +22,18 @@ public class VelocityService {
     }
 
     /**
-     * Increment and check transaction velocity for an account
-     * Returns true if velocity is within acceptable limits
+     * Increment and check transaction velocity for an account.
+     * Always resets TTL to keep the window sliding with each transaction.
+     * Returns true if velocity is within acceptable limits.
      */
     public boolean checkVelocity(String accountId) {
         String key = "velocity:" + accountId;
 
         Long currentCount = redisTemplate.opsForValue().increment(key);
+        // Always reset TTL to keep window sliding with each transaction
+        redisTemplate.expire(key, Duration.ofSeconds(velocityWindow));
 
-        if (currentCount != null && currentCount == 1) {
-            // First transaction, set expiration
-            redisTemplate.expire(key, Duration.ofSeconds(velocityWindow));
-        }
-
-        return currentCount == null || currentCount <= maxTransactions;
+        return currentCount != null && currentCount <= maxTransactions;
     }
 
     /**

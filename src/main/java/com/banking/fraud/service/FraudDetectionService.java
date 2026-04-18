@@ -110,9 +110,17 @@ public class FraudDetectionService {
         alert.setRulesScore(BigDecimal.valueOf(rulesScore).setScale(4, RoundingMode.HALF_UP));
         alert.setDescription(buildDescription(ruleMatches, mlScore, combinedScore));
 
-        // 8. Save and publish to Kafka
+        // 8. Save to DB (primary record)
         fraudAlertRepository.save(alert);
-        publishAlert(alert);
+        
+        // 9. Publish to Kafka (best effort, non-blocking for DB transaction)
+        try {
+            publishAlert(alert);
+        } catch (Exception e) {
+            // Log but don't fail the transaction - alert is already saved
+            System.err.println("Failed to publish alert to Kafka: " + e.getMessage());
+        }
+
 
         return alert;
     }
